@@ -1,0 +1,10 @@
+{
+  "targetUrl": "postgresql://postgres:postgres@localhost:5432/myapp",
+  "scratchUrl": "postgresql://postgres:postgres@localhost:5432/myapp_scratch_ddl",
+  "schema": "app",
+  "folder": null,
+  "preScriptDirName": "pre_script",
+  "postScriptDirName": "post_script",
+  "excludeDdlGlobs": ["secuencias/**"],
+  "outputFile": "./out/publicacion.sql"
+}

@@ -1,0 +1,29 @@
+{
+  "name": "pg-ddl-publish",
+  "version": "1.0.0",
+  "description": "Compara DDL de una carpeta de SQL con PostgreSQL (vía scratch + migra), genera publicación y ejecuta post_script.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "pg-ddl-publish": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js",
+    "publish": "node src/cli.js",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.0.5",
+    "vitest": "^3.0.5"
+  },
+  "dependencies": {
+    "@pgkit/migra": "^0.6.1",
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.3",
+    "pg": "^8.13.1"
+  }
+}
