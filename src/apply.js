@@ -34,6 +34,7 @@ export async function applyPublicationAndPost(opts) {
     if (!skipDdl) {
       console.error('Aplicando publicación en objetivo (transacción)…');
       await client.query('BEGIN');
+      await client.query(`CREATE SCHEMA IF NOT EXISTS ${escapeIdentifier(opts.schema)}`);
       await client.query(
         `SET search_path TO ${escapeIdentifier(opts.schema)}, public`,
       );
