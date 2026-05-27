@@ -5,6 +5,19 @@ import { generatePublication } from './generate.js';
 import { applyPublicationAndPost } from './apply.js';
 import { buildProdReleaseOutputPath } from './release-path.js';
 
+const CONFIG_FILENAME = 'ddl-publish.config.json';
+
+/**
+ * Resuelve la ruta del config con prioridad: --config explícito > carpeta --folder > CWD.
+ * @param {string | undefined} explicitConfig
+ * @param {string | undefined} folder
+ */
+function resolveConfigPath(explicitConfig, folder) {
+  if (explicitConfig) return explicitConfig;
+  if (folder) return path.join(path.resolve(folder), CONFIG_FILENAME);
+  return path.resolve(process.cwd(), CONFIG_FILENAME);
+}
+
 /**
  * @returns {Command}
  */
@@ -27,11 +40,7 @@ export function createProgram() {
       '-f, --folder <path>',
       'Carpeta raíz con migraciones .sql (se excluye post_script/)',
     )
-    .option(
-      '-c, --config <path>',
-      'JSON de configuración',
-      path.resolve(process.cwd(), 'ddl-publish.config.json'),
-    )
+    .option('-c, --config <path>', 'JSON de configuración (por defecto: busca en --folder, luego en CWD)')
     .option('--target-url <url>', 'Sobrescribe URL base objetivo')
     .option('--scratch-url <url>', 'Sobrescribe URL base scratch')
     .option('--schema <name>', 'Esquema de aplicación (ej. bd_dental)')
@@ -60,7 +69,7 @@ export function createProgram() {
       false,
     )
     .action(async (opts) => {
-      const cfg = await loadConfig(opts.config, {
+      const cfg = await loadConfig(resolveConfigPath(opts.config, opts.folder), {
         targetUrl: opts.targetUrl,
         scratchUrl: opts.scratchUrl,
         schema: opts.schema,
@@ -97,18 +106,14 @@ export function createProgram() {
     )
     .requiredOption('-f, --folder <path>', 'Misma carpeta raíz usada en generate (para post_script)')
     .requiredOption('-p, --publication <path>', 'Archivo .sql generado')
-    .option(
-      '-c, --config <path>',
-      'JSON de configuración',
-      path.resolve(process.cwd(), 'ddl-publish.config.json'),
-    )
+    .option('-c, --config <path>', 'JSON de configuración (por defecto: busca en --folder, luego en CWD)')
     .option('--target-url <url>', 'Sobrescribe URL base objetivo')
     .option('--schema <name>', 'Esquema de aplicación')
     .option('--pre-script-dir <name>', 'Nombre de subcarpeta previa', 'pre_script')
     .option('--post-script-dir <name>', 'Nombre de subcarpeta reservada', 'post_script')
     .action(async (opts) => {
       const cfg = await loadConfig(
-        opts.config,
+        resolveConfigPath(opts.config, opts.folder),
         {
           targetUrl: opts.targetUrl,
           schema: opts.schema,
@@ -135,11 +140,7 @@ export function createProgram() {
     .command('publish')
     .description('generate y apply en secuencia.')
     .requiredOption('-f, --folder <path>', 'Carpeta raíz con migraciones .sql')
-    .option(
-      '-c, --config <path>',
-      'JSON de configuración',
-      path.resolve(process.cwd(), 'ddl-publish.config.json'),
-    )
+    .option('-c, --config <path>', 'JSON de configuración (por defecto: busca en --folder, luego en CWD)')
     .option('--target-url <url>', 'Sobrescribe URL base objetivo')
     .option('--scratch-url <url>', 'Sobrescribe URL base scratch')
     .option('--schema <name>', 'Esquema de aplicación')
@@ -164,7 +165,7 @@ export function createProgram() {
       false,
     )
     .action(async (opts) => {
-      const cfg = await loadConfig(opts.config, {
+      const cfg = await loadConfig(resolveConfigPath(opts.config, opts.folder), {
         targetUrl: opts.targetUrl,
         scratchUrl: opts.scratchUrl,
         schema: opts.schema,

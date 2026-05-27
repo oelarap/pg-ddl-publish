@@ -5,6 +5,82 @@ import { listDdlSqlFiles, listPreScriptFiles } from './sql-files.js';
 import { ensureDatabaseExists, resetApplicationSchema, runSqlFile } from './pg-exec.js';
 import { executeDdlFiles } from './dependency-resolver.js';
 
+const CREATE_FN_RE = /^create\s+(or\s+replace\s+)?function\b/i;
+
+/**
+ * Divide el SQL en sentencias individuales respetando cadenas dollar-quoted y literales.
+ * @param {string} sql
+ * @returns {string[]}
+ */
+export function splitSqlStatements(sql) {
+  const statements = [];
+  let current = '';
+  let i = 0;
+  const n = sql.length;
+
+  while (i < n) {
+    const ch = sql[i];
+
+    // Dollar-quoted string: $tag$...$tag$
+    if (ch === '$') {
+      const tagEnd = sql.indexOf('$', i + 1);
+      if (tagEnd !== -1) {
+        const tag = sql.slice(i, tagEnd + 1);
+        const closeIdx = sql.indexOf(tag, tagEnd + 1);
+        if (closeIdx !== -1) {
+          current += sql.slice(i, closeIdx + tag.length);
+          i = closeIdx + tag.length;
+          continue;
+        }
+      }
+    }
+
+    // Single-quoted string
+    if (ch === "'") {
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] === "'") {
+          if (j + 1 < n && sql[j + 1] === "'") { j += 2; }
+          else { j++; break; }
+        } else { j++; }
+      }
+      current += sql.slice(i, j);
+      i = j;
+      continue;
+    }
+
+    if (ch === ';') {
+      current += ';';
+      const trimmed = current.trim();
+      if (trimmed.length > 1) statements.push(trimmed);
+      current = '';
+      i++;
+      continue;
+    }
+
+    current += ch;
+    i++;
+  }
+
+  const remaining = current.trim();
+  if (remaining) statements.push(remaining);
+  return statements;
+}
+
+/**
+ * Mueve CREATE [OR REPLACE] FUNCTION antes de CREATE TABLE para evitar fallos
+ * en columnas GENERATED ALWAYS AS que referencian funciones del mismo diff.
+ * @param {string} sql
+ * @returns {string}
+ */
+export function reorderFunctionsBeforeTables(sql) {
+  const stmts = splitSqlStatements(sql);
+  const fns = stmts.filter((s) => CREATE_FN_RE.test(s.trimStart()));
+  if (fns.length === 0) return sql;
+  const others = stmts.filter((s) => !CREATE_FN_RE.test(s.trimStart()));
+  return [...fns, ...others].join('\n\n');
+}
+
 /**
  * @param {object} opts
  * @param {string} opts.folderAbs
@@ -58,7 +134,7 @@ export async function generatePublication(opts) {
       unsafe: opts.unsafe,
       ignoreExtensionVersions: true,
     });
-    sql = migration.sql.trim();
+    sql = reorderFunctionsBeforeTables(migration.sql.trim());
   } catch (e) {
     if (e instanceof UnsafeMigrationException) {
       throw new Error(

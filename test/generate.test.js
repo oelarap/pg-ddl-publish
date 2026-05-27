@@ -39,7 +39,7 @@ vi.mock('@pgkit/migra', () => ({
   UnsafeMigrationException: migraMocks.UnsafeMigrationException,
 }));
 
-import { generatePublication } from '../src/generate.js';
+import { generatePublication, splitSqlStatements, reorderFunctionsBeforeTables } from '../src/generate.js';
 
 const baseOpts = (folderAbs, outFile) => ({
   folderAbs,
@@ -52,6 +52,101 @@ const baseOpts = (folderAbs, outFile) => ({
   outputFileAbs: outFile,
   unsafe: false,
   resolver: 'smart',
+});
+
+describe('splitSqlStatements', () => {
+  it('splits simple statements', () => {
+    const stmts = splitSqlStatements('SELECT 1; SELECT 2;');
+    assert.deepEqual(stmts, ['SELECT 1;', 'SELECT 2;']);
+  });
+
+  it('preserves dollar-quoted function bodies', () => {
+    const sql = `CREATE FUNCTION f() RETURNS void LANGUAGE sql AS $function$ SELECT 1; $function$;`;
+    const stmts = splitSqlStatements(sql);
+    assert.equal(stmts.length, 1);
+    assert.ok(stmts[0].includes('$function$'));
+  });
+
+  it('handles nested semicolons inside dollar-quoted strings', () => {
+    const sql = `CREATE FUNCTION g() RETURNS text LANGUAGE sql AS $$SELECT 'a;b';$$; ALTER TABLE t ADD c int;`;
+    const stmts = splitSqlStatements(sql);
+    assert.equal(stmts.length, 2);
+    assert.ok(stmts[0].startsWith('CREATE FUNCTION'));
+    assert.ok(stmts[1].startsWith('ALTER TABLE'));
+  });
+
+  it('handles single-quoted strings with embedded semicolons', () => {
+    const stmts = splitSqlStatements(`INSERT INTO t VALUES ('a;b'); SELECT 1;`);
+    assert.equal(stmts.length, 2);
+  });
+
+  it('handles escaped single quotes inside strings', () => {
+    const stmts = splitSqlStatements(`INSERT INTO t VALUES ('it''s fine'); SELECT 2;`);
+    assert.equal(stmts.length, 2);
+    assert.ok(stmts[0].includes("it''s fine"));
+  });
+
+  it('ignores whitespace-only or empty input', () => {
+    assert.deepEqual(splitSqlStatements(''), []);
+    assert.deepEqual(splitSqlStatements('   \n  '), []);
+  });
+});
+
+describe('reorderFunctionsBeforeTables', () => {
+  it('returns sql unchanged when no functions', () => {
+    const sql = 'CREATE TABLE t (id int);\nALTER TABLE t ADD c text;';
+    assert.equal(reorderFunctionsBeforeTables(sql), sql);
+  });
+
+  it('moves CREATE FUNCTION before CREATE TABLE', () => {
+    const fn = `CREATE FUNCTION f(text) RETURNS text LANGUAGE sql AS $$SELECT $1$$;`;
+    const tbl = `CREATE TABLE u (id int, col text GENERATED ALWAYS AS (f(name)) STORED);`;
+    const sql = `${tbl}\n${fn}`;
+    const result = reorderFunctionsBeforeTables(sql);
+    assert.ok(result.indexOf('CREATE FUNCTION') < result.indexOf('CREATE TABLE'));
+  });
+
+  it('moves CREATE OR REPLACE FUNCTION before CREATE TABLE', () => {
+    const fn = `CREATE OR REPLACE FUNCTION f() RETURNS void LANGUAGE sql AS $$SELECT 1$$;`;
+    const tbl = `CREATE TABLE t (id int);`;
+    const sql = `${tbl}\n${fn}`;
+    const result = reorderFunctionsBeforeTables(sql);
+    assert.ok(result.indexOf('CREATE OR REPLACE FUNCTION') < result.indexOf('CREATE TABLE'));
+  });
+
+  it('keeps non-function statements in original relative order', () => {
+    const sql = [
+      `CREATE TABLE a (id int);`,
+      `ALTER TABLE a ADD c int;`,
+      `CREATE FUNCTION f() RETURNS void LANGUAGE sql AS $$SELECT 1$$;`,
+      `CREATE TABLE b (id int);`,
+    ].join('\n');
+    const result = reorderFunctionsBeforeTables(sql);
+    const fnIdx = result.indexOf('CREATE FUNCTION');
+    const aIdx = result.indexOf('CREATE TABLE a');
+    const alterIdx = result.indexOf('ALTER TABLE');
+    const bIdx = result.indexOf('CREATE TABLE b');
+    assert.ok(fnIdx < aIdx);
+    assert.ok(aIdx < alterIdx);
+    assert.ok(alterIdx < bIdx);
+  });
+
+  it('handles real-world migra pattern with dollar-quoted function', () => {
+    const fn = [
+      `CREATE OR REPLACE FUNCTION bd_dental.f_tsvector_nombre(text, text, text)`,
+      ` RETURNS tsvector LANGUAGE sql IMMUTABLE PARALLEL SAFE`,
+      `AS $function$ SELECT to_tsvector('spanish', $1 || ' ' || $2) $function$;`,
+    ].join('\n');
+    const tbl = [
+      `CREATE TABLE bd_dental.usuario (`,
+      `  id serial4 NOT NULL,`,
+      `  busqueda_nombre tsvector GENERATED ALWAYS AS (f_tsvector_nombre(nombre::text, ap::text, am::text)) STORED`,
+      `);`,
+    ].join('\n');
+    const sql = `${tbl}\n${fn}`;
+    const result = reorderFunctionsBeforeTables(sql);
+    assert.ok(result.indexOf('f_tsvector_nombre') < result.indexOf('CREATE TABLE'));
+  });
 });
 
 describe('generatePublication', () => {
