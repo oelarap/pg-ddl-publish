@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import pg from 'pg';
 import { listPostScriptFiles, listPreScriptFiles } from './sql-files.js';
-import { runSqlFile } from './pg-exec.js';
+import { runSql, runSqlFile } from './pg-exec.js';
 
 const { Client, escapeIdentifier } = pg;
 
@@ -16,6 +16,13 @@ const { Client, escapeIdentifier } = pg;
  * @param {string} opts.publicationPathAbs
  */
 export async function applyPublicationAndPost(opts) {
+  // El esquema debe existir antes de los pre_scripts para que las extensiones
+  // se instalen en él (igual que en scratch), no en public.
+  await runSql(
+    opts.targetUrl,
+    `CREATE SCHEMA IF NOT EXISTS ${escapeIdentifier(opts.schema)}`,
+  );
+
   const preFiles = await listPreScriptFiles(opts.folderAbs, opts.preScriptDirName);
   if (preFiles.length > 0) {
     console.error(`Ejecutando pre_script (${preFiles.length} archivo(s))…`);
@@ -34,10 +41,7 @@ export async function applyPublicationAndPost(opts) {
     if (!skipDdl) {
       console.error('Aplicando publicación en objetivo (transacción)…');
       await client.query('BEGIN');
-      await client.query(`CREATE SCHEMA IF NOT EXISTS ${escapeIdentifier(opts.schema)}`);
-      await client.query(
-        `SET search_path TO ${escapeIdentifier(opts.schema)}, public`,
-      );
+      await client.query(`SET search_path TO ${escapeIdentifier(opts.schema)}, public`);
       await client.query(pub);
       await client.query('COMMIT');
     } else {

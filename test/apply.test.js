@@ -70,7 +70,8 @@ describe('applyPublicationAndPost', () => {
       });
       const calls = pgMocks.queryMock.mock.calls.map((c) => String(c[0]));
       assert.ok(!calls.includes('BEGIN'));
-      assert.equal(calls.length, 0);
+      assert.equal(calls.length, 1);
+      assert.ok(calls[0].toUpperCase().includes('CREATE SCHEMA'));
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
@@ -120,7 +121,7 @@ describe('applyPublicationAndPost', () => {
         postScriptDirName: 'post_script',
         publicationPathAbs: pub,
       });
-      assert.equal(pgMocks.queryMock.mock.calls.length, 0);
+      assert.equal(pgMocks.queryMock.mock.calls.length, 1); // solo CREATE SCHEMA
     } finally {
       await rm(tmp, { recursive: true, force: true });
     }
