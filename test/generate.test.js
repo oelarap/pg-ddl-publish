@@ -131,6 +131,17 @@ describe('reorderFunctionsBeforeTables', () => {
     assert.ok(alterIdx < bIdx);
   });
 
+  it('puts dependency function before the function that calls it', () => {
+    const dep = `CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text LANGUAGE sql AS $$SELECT unaccent($1)$$;`;
+    const caller = `CREATE OR REPLACE FUNCTION f_tsvector_nombre(text, text, text) RETURNS tsvector LANGUAGE sql AS $$SELECT to_tsvector(f_unaccent($1))$$;`;
+    const tbl = `CREATE TABLE u (id int);`;
+    // migra generates caller before dep (alphabetical: t < u)
+    const sql = `${caller}\n${dep}\n${tbl}`;
+    const result = reorderFunctionsBeforeTables(sql);
+    assert.ok(result.indexOf('f_unaccent') < result.indexOf('f_tsvector_nombre'));
+    assert.ok(result.indexOf('f_tsvector_nombre') < result.indexOf('CREATE TABLE'));
+  });
+
   it('handles real-world migra pattern with dollar-quoted function', () => {
     const fn = [
       `CREATE OR REPLACE FUNCTION bd_dental.f_tsvector_nombre(text, text, text)`,

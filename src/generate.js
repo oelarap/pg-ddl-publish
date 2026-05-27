@@ -68,8 +68,88 @@ export function splitSqlStatements(sql) {
 }
 
 /**
+ * Extrae el nombre simple (sin schema) de una sentencia CREATE [OR REPLACE] FUNCTION.
+ * @param {string} stmt
+ * @returns {string | null}
+ */
+function extractFunctionSimpleName(stmt) {
+  const m = stmt.match(/^create\s+(?:or\s+replace\s+)?function\s+(?:"?[\w]+"?\s*\.\s*)?"?([\w]+)"?\s*\(/im);
+  return m ? m[1].toLowerCase() : null;
+}
+
+/**
+ * Ordena funciones de forma que las dependencias (funciones llamadas por otras)
+ * aparezcan primero. Usa ordenamiento topológico (algoritmo de Kahn).
+ * Si hay ciclos o no se puede determinar el orden, devuelve el array sin cambios.
+ * @param {string[]} fns
+ * @returns {string[]}
+ */
+function topoSortFunctions(fns) {
+  if (fns.length <= 1) return fns;
+
+  /** @type {Map<string, string>} name → stmt */
+  const nameToStmt = new Map();
+  /** @type {Map<string, string>} stmt → name */
+  const stmtToName = new Map();
+
+  for (const fn of fns) {
+    const name = extractFunctionSimpleName(fn);
+    if (name) {
+      nameToStmt.set(name, fn);
+      stmtToName.set(fn, name);
+    }
+  }
+
+  const names = [...nameToStmt.keys()];
+
+  // Para cada función, detecta qué otras funciones del mismo diff aparecen en su cuerpo.
+  // (heurística: búsqueda de nombre simple en el texto de la sentencia)
+  /** @type {Map<string, Set<string>>} name → set de nombres de los que depende */
+  const deps = new Map(names.map((n) => [n, new Set()]));
+  for (const name of names) {
+    const body = nameToStmt.get(name) ?? '';
+    for (const other of names) {
+      if (other !== name && body.toLowerCase().includes(other)) {
+        deps.get(name)?.add(other);
+      }
+    }
+  }
+
+  // Kahn: in-degree y lista de adyacencia inversa
+  /** @type {Map<string, number>} */
+  const inDeg = new Map(names.map((n) => [n, deps.get(n)?.size ?? 0]));
+  /** @type {Map<string, string[]>} dependiente → lista de los que dependen de él */
+  const revAdj = new Map(names.map((n) => /** @type {[string, string[]]} */ ([n, []])));
+  for (const [name, depSet] of deps) {
+    for (const dep of depSet) {
+      revAdj.get(dep)?.push(name);
+    }
+  }
+
+  const queue = names.filter((n) => (inDeg.get(n) ?? 0) === 0);
+  const sorted = [];
+  while (queue.length > 0) {
+    const n = /** @type {string} */ (queue.shift());
+    sorted.push(n);
+    for (const dependent of revAdj.get(n) ?? []) {
+      const d = (inDeg.get(dependent) ?? 1) - 1;
+      inDeg.set(dependent, d);
+      if (d === 0) queue.push(dependent);
+    }
+  }
+
+  // Si no se pudo ordenar todo (ciclo u otro problema), devolvemos el orden original
+  if (sorted.length !== names.length) return fns;
+
+  const sortedStmts = sorted.map((n) => nameToStmt.get(n) ?? '').filter(Boolean);
+  const unnamed = fns.filter((fn) => !stmtToName.has(fn));
+  return [...sortedStmts, ...unnamed];
+}
+
+/**
  * Mueve CREATE [OR REPLACE] FUNCTION antes de CREATE TABLE para evitar fallos
- * en columnas GENERATED ALWAYS AS que referencian funciones del mismo diff.
+ * en columnas GENERATED ALWAYS AS que referencian funciones del mismo diff,
+ * y ordena las propias funciones por dependencias.
  * @param {string} sql
  * @returns {string}
  */
@@ -78,7 +158,7 @@ export function reorderFunctionsBeforeTables(sql) {
   const fns = stmts.filter((s) => CREATE_FN_RE.test(s.trimStart()));
   if (fns.length === 0) return sql;
   const others = stmts.filter((s) => !CREATE_FN_RE.test(s.trimStart()));
-  return [...fns, ...others].join('\n\n');
+  return [...topoSortFunctions(fns), ...others].join('\n\n');
 }
 
 /**
